@@ -29,10 +29,11 @@
     padding: 0 12px;
   }
   h1{
-    font-size: 20px;
+    font-size: 22px; /* bigger & louder */
+    font-weight: 800;
     margin: 8px 0 12px;
     text-align:center;
-    letter-spacing:.5px;
+    letter-spacing:.6px;
   }
   .card{
     background: var(--white);
@@ -154,7 +155,10 @@
       "พักหายใจนิด ลุยต่อ!", "รอบหน้าผ่านชัวร์!", "พลาดนิดเดียว! ลองใหม่"
     ],
     win: [
-      "ยินดีด้วย จิง ♥ ฝน!", "รักนี้ลุล่วง!", "สินสอดรวมสวยมาก!"
+      "ขอให้จิงดูแลฝนด้วยหัวใจเสมอ และฝนเติมพลังใจให้จิงตลอดไป💐",
+      "ขอให้รักนี้งอกงามทุกวัน 💐",
+      "รักมั่นคง ดั่งทองคำคู่ประตูทอง 💛",
+      "รักมากขึ้นทุกวันนะ จิง–ฝน 💍"
     ]
   };
   function pick(arr){ return arr[Math.floor(Math.random()*arr.length)] }
@@ -202,9 +206,10 @@
   let bubbles = [];
   // active gate message (typewriter) {gateIndex, text, t0}
   let gateMsg = null;
-  let nearBrideShown = false;
-  let passedCount = 0;
-  let gameOverLine = null, winLine = null;
+let nearBrideShown = false;
+let passedCount = 0;
+let gameOverLine = null, winLine = null;
+let winsCount = 0;
 
   // ----- Helpers -----
   function randBetween(a,b){ return a + Math.random()*(b-a); }
@@ -432,7 +437,10 @@
         const goal = {x: brideOnScreenX-10, y: bride.y-24, w: 40, h: 60};
         if(aabb(player.x, player.y, player.w, player.h, goal.x, goal.y, goal.w, goal.h)){
           state.phase = 'win';
-          if(!winLine) winLine = pick(MSG.win);
+          if(!winLine) {
+            winLine = (winsCount === 0) ? MSG.win[0] : pick(MSG.win);
+          }
+          winsCount += 1;
         }
       }
 
@@ -730,18 +738,48 @@
 
   function drawBanner(){
     ctx.save();
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = COL.white;
-    ctx.fillRect(10,10, VIRTUAL_W-20, 54);
-    ctx.strokeStyle = '#00000016';
-    ctx.strokeRect(10,10, VIRTUAL_W-20, 54);
+    const x = 10, y = 10, w = VIRTUAL_W - 20, h = 86; // taller banner
+
+    // soft gradient background with rounded corners
+    const grad = ctx.createLinearGradient(0, y, 0, y + h);
+    grad.addColorStop(0, '#fffdf7');
+    grad.addColorStop(1, '#fff4f8');
+    ctx.globalAlpha = 0.96;
+    ctx.fillStyle = grad;
+    roundRect(ctx, x, y, w, h, 14);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = '#00000018';
+    ctx.stroke();
+
+    // subtle gold accent lines
+    ctx.strokeStyle = 'rgba(212,175,55,0.6)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(x+12, y+14); ctx.lineTo(x+w-12, y+14);
+    ctx.moveTo(x+12, y+h-14); ctx.lineTo(x+w-12, y+h-14);
+    ctx.stroke();
+
+    // big title: จิง & ฝน
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 26px system-ui, -apple-system, sans-serif';
+    const title = 'จิง ♥ ฝน';
+    ctx.fillStyle = '#00000022';
+    ctx.fillText(title, VIRTUAL_W/2, y + h*0.40 + 1.8); // soft shadow
     ctx.fillStyle = COL.deep;
-    ctx.textAlign='center';
-    ctx.textBaseline='middle';
-    ctx.font = 'bold 16px system-ui, -apple-system, sans-serif';
-    ctx.fillText('จิง ♥ ฝน', VIRTUAL_W/2, 26);
-    ctx.font = '12px system-ui, -apple-system, sans-serif';
-    ctx.fillText('ประตูเงิน ประตูทอง', VIRTUAL_W/2, 48);
+    ctx.fillText(title, VIRTUAL_W/2, y + h*0.40);
+
+    // subtitle
+    ctx.font = '14px system-ui, -apple-system, sans-serif';
+    ctx.fillStyle = '#6b5a50';
+    ctx.fillText('เกม ประตูเงิน ประตูทอง', VIRTUAL_W/2, y + h*0.72);
+
+    // tiny decorative hearts
+    ctx.font = '16px system-ui, -apple-system, sans-serif';
+    ctx.fillText('💖', x+28, y+24);
+    ctx.fillText('💖', x+w-28, y+24);
+
     ctx.restore();
   }
 
