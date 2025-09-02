@@ -81,6 +81,17 @@
     padding:8px 12px; /* a bit more compact */
     z-index: 5;
   }
+  .btn#recBtn{
+    position: absolute;
+    top: 52px;         /* sit below the camera button */
+    right: 10px;
+    background:#ffffff;
+    color:#333;
+    border:2px solid #00000012;
+    padding:8px 12px;
+    z-index: 5;
+  }
+  .btn#recBtn.active{ border-color:#ff8a80; color:#b00020; background:#fff5f5; }
   .pill{
     border-radius:999px;
     background:#ffffffcc;
@@ -103,6 +114,7 @@
         <div class="pill muted">โหมด: <span id="modeLabel">Casual</span></div>
         <button class="btn" id="restartBtn">เริ่มใหม่</button>
         <button class="btn" id="camBtn">โหมดเห็นหน้า: ปิด</button>
+        <button class="btn" id="recBtn">บันทึก: ปิด</button>
       </div>
       <div class="note">แตะหน้าจอหรือกด <strong>Space</strong> เพื่อกระโดด • ผ่าน<strong>ประตูเงิน ประตูทอง</strong>ไปหา <strong>ฝน</strong></div>
       <div class="row note">
@@ -213,7 +225,6 @@
     ctx.setTransform(DPR,0,0,DPR,0,0);
     ctx.imageSmoothingEnabled = false;
   }
-
   setupCanvas();
 
   // ----- Recording (canvas -> WebM) -----
@@ -222,7 +233,13 @@
   let isRecording = false;
 
   function getSupportedMime(){
-    const cands = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+    const cands = [
+      'video/mp4;codecs=h264',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm'
+    ];
     for(const t of cands){ if(window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t; }
     return '';
   }
@@ -238,15 +255,18 @@
       }
       recordedChunks = [];
       const mime = getSupportedMime();
-      mediaRecorder = new MediaRecorder(stream, mime? {mimeType:mime}:{ });
+      const opts = mime ? { mimeType: mime, videoBitsPerSecond: 4_000_000 } : {};
+      mediaRecorder = new MediaRecorder(stream, opts);
       mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size>0) recordedChunks.push(e.data); };
       mediaRecorder.onstop = ()=>{
         try{
-          const type = (mediaRecorder && mediaRecorder.mimeType) || 'video/webm';
+          const type = (mediaRecorder && mediaRecorder.mimeType) || 'video/mp4';
           const blob = new Blob(recordedChunks, {type});
           const url = URL.createObjectURL(blob);
           const ts = new Date().toISOString().replace(/[:.]/g,'-');
-          const name = `wedding-flappy_${ts}_${state.phase==='win'?'win':'gameover'}_${state.score}.webm`;
+          const isMp4 = /mp4/i.test(type);
+          const ext = isMp4 ? 'mp4' : 'webm';
+          const name = `wedding-flappy_${ts}_${state.phase==='win'?'win':'gameover'}_${state.score}.${ext}`;
           const a = document.createElement('a');
           a.href = url; a.download = name; document.body.appendChild(a); a.click();
           setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1200);
@@ -274,7 +294,8 @@
     mode: 'casual', // 'casual' | 'hard'
     scrollX: 0,
     flapQueued: false,
-    useCam: false
+    useCam: false,
+    recArmed: true // auto-start on play for better mobile UX
   };
 
   const player = {
@@ -362,7 +383,6 @@ let winsCount = 0;
   function setScoreLabel(){ document.getElementById('score').textContent = fmt(state.score); }
 
   function reset(levelMode){
-    // stop any ongoing recording when resetting
     stopRecording();
     state.phase = 'ready';
     state.score = 0;
@@ -423,7 +443,7 @@ let winsCount = 0;
     state.flapQueued = true;
     if(state.phase==='ready'){
       state.phase='play';
-      startRecording();
+      if(state.recArmed && !isRecording){ startRecording(); }
     } else if(state.phase==='gameover' || state.phase==='win'){
       reset(state.mode);
     }
@@ -444,6 +464,29 @@ let winsCount = 0;
     camBtn.textContent = state.useCam ? 'โหมดเห็นหน้า: เปิด' : 'โหมดเห็นหน้า: ปิด';
     if(state.useCam){ await startCamera(); }
     else { stopCamera(); }
+  });
+
+  // --- Recording toggle button ---
+  const recBtn = document.getElementById('recBtn');
+  function updateRecLabel(){
+    if(isRecording){
+      recBtn.textContent = 'กำลังบันทึก… คลิกเพื่อหยุด';
+      recBtn.classList.add('active');
+    }else{
+      recBtn.textContent = 'บันทึก: ' + (state.recArmed ? 'เปิด' : 'ปิด');
+      recBtn.classList.toggle('active', state.recArmed);
+    }
+  }
+  recBtn.addEventListener('click', ()=>{
+    if(state.phase==='play'){
+      // During play: click toggles live recording immediately
+      if(isRecording){ stopRecording(); }
+      else { state.recArmed = true; startRecording(); }
+    }else{
+      // In menus/ready: toggle arming
+      state.recArmed = !state.recArmed;
+    }
+    updateRecLabel();
   });
 
   // ----- Physics & Collision -----
@@ -1070,6 +1113,7 @@ let winsCount = 0;
   if(location.hash==='#hard'){ reset('hard'); document.getElementById('modeLabel').textContent='Hard'; }
   document.getElementById('modeLabel').textContent = state.mode==='casual'?'Casual':'Hard';
   document.getElementById('camBtn').textContent = state.useCam ? 'โหมดเห็นหน้า: เปิด' : 'โหมดเห็นหน้า: ปิด';
+  updateRecLabel();
   setScoreLabel();
 })();
 </script>
