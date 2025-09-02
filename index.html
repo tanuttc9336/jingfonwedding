@@ -36,6 +36,7 @@
     letter-spacing:.6px;
   }
   .card{
+    position: relative; /* allow absolute children (camera button) */
     background: var(--white);
     border-radius: 14px;
     box-shadow: 0 10px 24px var(--shadow);
@@ -70,6 +71,16 @@
     box-shadow: 0 6px 14px var(--shadow);
   }
   .btn:active{ transform: translateY(1px); }
+  .btn#camBtn{
+    position: absolute;
+    top: 10px;        /* move up */
+    right: 10px;      /* stick to right edge */
+    background:#ffffff;
+    color:#333;
+    border:2px solid #00000012;
+    padding:8px 12px; /* a bit more compact */
+    z-index: 5;
+  }
   .pill{
     border-radius:999px;
     background:#ffffffcc;
@@ -91,6 +102,7 @@
         <div class="pill"><strong>สินสอด:</strong> <span id="score">0</span> บาท</div>
         <div class="pill muted">โหมด: <span id="modeLabel">Casual</span></div>
         <button class="btn" id="restartBtn">เริ่มใหม่</button>
+        <button class="btn" id="camBtn">โหมดเห็นหน้า: ปิด</button>
       </div>
       <div class="note">แตะหน้าจอหรือกด <strong>Space</strong> เพื่อกระโดด • ผ่าน<strong>ประตูเงิน ประตูทอง</strong>ไปหา <strong>ฝน</strong></div>
       <div class="row note">
@@ -135,6 +147,34 @@
     leaf:'#7AC597'
   };
 
+  // ----- Assets (images) -----
+  const groomHead = new Image();
+  groomHead.src = 'groom.png'; // put groom.png next to index.html (transparent PNG recommended)
+
+  // ----- Camera (selfie background) -----
+  const camVideo = document.createElement('video');
+  camVideo.autoplay = true; camVideo.playsInline = true; camVideo.muted = true;
+  let camStream = null; let camReady = false;
+  async function startCamera(){
+    try{
+      if(camStream) return; // already on
+      camStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio:false });
+      camVideo.srcObject = camStream;
+      camReady = true;
+    }catch(err){
+      console.warn('camera error', err);
+      // gracefully turn off if permission denied
+      state.useCam = false;
+      const btn = document.getElementById('camBtn');
+      if(btn) btn.textContent = 'โหมดเห็นหน้า: ปิด';
+      showBubble('ไม่สามารถเปิดกล้องได้', VIRTUAL_W/2, 120, 'screen');
+    }
+  }
+  function stopCamera(){
+    if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream = null; }
+    camVideo.srcObject = null; camReady = false;
+  }
+
   // ----- Message Presets -----
   const MSG = {
     gateBlock: [
@@ -173,7 +213,59 @@
     ctx.setTransform(DPR,0,0,DPR,0,0);
     ctx.imageSmoothingEnabled = false;
   }
+
   setupCanvas();
+
+  // ----- Recording (canvas -> WebM) -----
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let isRecording = false;
+
+  function getSupportedMime(){
+    const cands = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm'];
+    for(const t of cands){ if(window.MediaRecorder && MediaRecorder.isTypeSupported(t)) return t; }
+    return '';
+  }
+
+  function startRecording(){
+    try{
+      if(isRecording) return;
+      const fps = 30;
+      const stream = canvas.captureStream ? canvas.captureStream(fps) : null;
+      if(!stream || !window.MediaRecorder){
+        showBubble('อุปกรณ์นี้ยังไม่รองรับการบันทึกวิดีโอ', VIRTUAL_W/2, 140, 'screen');
+        return;
+      }
+      recordedChunks = [];
+      const mime = getSupportedMime();
+      mediaRecorder = new MediaRecorder(stream, mime? {mimeType:mime}:{ });
+      mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size>0) recordedChunks.push(e.data); };
+      mediaRecorder.onstop = ()=>{
+        try{
+          const type = (mediaRecorder && mediaRecorder.mimeType) || 'video/webm';
+          const blob = new Blob(recordedChunks, {type});
+          const url = URL.createObjectURL(blob);
+          const ts = new Date().toISOString().replace(/[:.]/g,'-');
+          const name = `wedding-flappy_${ts}_${state.phase==='win'?'win':'gameover'}_${state.score}.webm`;
+          const a = document.createElement('a');
+          a.href = url; a.download = name; document.body.appendChild(a); a.click();
+          setTimeout(()=>{ URL.revokeObjectURL(url); a.remove(); }, 1200);
+          showBubble('บันทึกวิดีโอเสร็จแล้ว ✅', VIRTUAL_W/2, 160, 'screen');
+        }catch(err){ console.warn('save error', err); }
+      };
+      mediaRecorder.start();
+      isRecording = true;
+      showBubble('เริ่มบันทึกวิดีโอ ▶️', VIRTUAL_W/2, 120, 'screen');
+    }catch(err){ console.warn('recorder error', err); }
+  }
+
+  function stopRecording(){
+    try{
+      if(mediaRecorder && isRecording){ mediaRecorder.stop(); }
+    }finally{
+      isRecording = false;
+    }
+  }
 
   // ----- Game State -----
   const state = {
@@ -181,7 +273,8 @@
     score: 0,
     mode: 'casual', // 'casual' | 'hard'
     scrollX: 0,
-    flapQueued: false
+    flapQueued: false,
+    useCam: false
   };
 
   const player = {
@@ -217,11 +310,11 @@ let winsCount = 0;
 
   function worldXToScreen(x){ return x - state.scrollX; }
 
-  function showBubble(text, x, y, anchor){
-    bubbles.push({ text, x, y, anchor: anchor||'world', t0: performance.now(), life: 120, maxChars: text.length });
+  function showBubble(text, x, y, anchor, align){
+    bubbles.push({ text, x, y, anchor: anchor||'world', t0: performance.now(), life: 120, maxChars: text.length, align: align||null });
   }
 
-  function drawSpeechBubble(text, sx, sy){
+  function drawSpeechBubble(text, sx, sy, align){
     ctx.save();
     ctx.font = 'bold 12px system-ui, -apple-system, sans-serif';
     ctx.textAlign = 'center';
@@ -239,6 +332,10 @@ let winsCount = 0;
     if(lines.length>2) lines = [lines.slice(0,2).join(' ')];
     const w = Math.min(maxW, Math.max(80, Math.max(...lines.map(l=>ctx.measureText(l).width)) + 24));
     const h = 12 + lines.length*16 + 10;
+    // if align right, clamp bubble to right edge with small margin
+    if(align === 'right'){
+      sx = Math.min(sx, VIRTUAL_W - (w/2 + 12));
+    }
     // bubble
     ctx.globalAlpha = 0.92;
     ctx.fillStyle = '#ffffffcc';
@@ -259,12 +356,14 @@ let winsCount = 0;
       const sx = b.anchor==='world' ? worldXToScreen(b.x) : b.x;
       const sy = b.y;
       if(sx < -60 || sx > VIRTUAL_W+60) continue;
-      drawSpeechBubble(txt, sx, sy);
+      drawSpeechBubble(txt, sx, sy, b.align);
     }
   }
   function setScoreLabel(){ document.getElementById('score').textContent = fmt(state.score); }
 
   function reset(levelMode){
+    // stop any ongoing recording when resetting
+    stopRecording();
     state.phase = 'ready';
     state.score = 0;
     state.scrollX = 0;
@@ -324,6 +423,7 @@ let winsCount = 0;
     state.flapQueued = true;
     if(state.phase==='ready'){
       state.phase='play';
+      startRecording();
     } else if(state.phase==='gameover' || state.phase==='win'){
       reset(state.mode);
     }
@@ -338,6 +438,13 @@ let winsCount = 0;
   canvas.addEventListener('mousedown', queueFlap);
   canvas.addEventListener('touchstart', (e)=>{ e.preventDefault(); queueFlap(); }, {passive:false});
   document.getElementById('restartBtn').addEventListener('click', ()=> reset(state.mode));
+  const camBtn = document.getElementById('camBtn');
+  camBtn.addEventListener('click', async ()=>{
+    state.useCam = !state.useCam;
+    camBtn.textContent = state.useCam ? 'โหมดเห็นหน้า: เปิด' : 'โหมดเห็นหน้า: ปิด';
+    if(state.useCam){ await startCamera(); }
+    else { stopCamera(); }
+  });
 
   // ----- Physics & Collision -----
   function aabb(ax,ay,aw,ah, bx,by,bw,bh){
@@ -386,6 +493,7 @@ let winsCount = 0;
       if(player.y + player.h > VIRTUAL_H - GROUND_H){
         player.y = VIRTUAL_H - GROUND_H - player.h;
         state.phase = 'gameover';
+        stopRecording();
         if(!gameOverLine) gameOverLine = pick(MSG.gameOver);
       }
 
@@ -403,6 +511,7 @@ let winsCount = 0;
         if(aabb(player.x, player.y, player.w, player.h, topRect.x, topRect.y, topRect.w, topRect.h) ||
            aabb(player.x, player.y, player.w, player.h, botRect.x, botRect.y, botRect.w, botRect.h)){
           state.phase = 'gameover';
+          stopRecording();
           if(!gameOverLine) gameOverLine = pick(MSG.gameOver);
         }
         if(!g.passed && onScreenX + 20 < player.x){
@@ -437,6 +546,7 @@ let winsCount = 0;
         const goal = {x: brideOnScreenX-10, y: bride.y-24, w: 40, h: 60};
         if(aabb(player.x, player.y, player.w, player.h, goal.x, goal.y, goal.w, goal.h)){
           state.phase = 'win';
+          stopRecording();
           if(!winLine) {
             winLine = (winsCount === 0) ? MSG.win[0] : pick(MSG.win);
           }
@@ -486,11 +596,25 @@ let winsCount = 0;
 
   // ----- Rendering -----
   function clear(){
-    const g = ctx.createLinearGradient(0,0,0,VIRTUAL_H);
-    g.addColorStop(0, COL.cream);
-    g.addColorStop(1, '#FFFFFF');
-    ctx.fillStyle = g;
-    ctx.fillRect(0,0,VIRTUAL_W,VIRTUAL_H);
+    if(state.useCam && camReady && camVideo.readyState >= 2){
+      // draw live camera as background (selfie mirror)
+      ctx.save();
+      ctx.scale(-1, 1);
+      ctx.drawImage(camVideo, -VIRTUAL_W, 0, VIRTUAL_W, VIRTUAL_H);
+      ctx.restore();
+      // soft overlay gradient to keep UI readable
+      const g = ctx.createLinearGradient(0,0,0,VIRTUAL_H);
+      g.addColorStop(0, 'rgba(247,232,217,0.35)');
+      g.addColorStop(1, 'rgba(255,255,255,0.35)');
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,VIRTUAL_W,VIRTUAL_H);
+    } else {
+      const g = ctx.createLinearGradient(0,0,0,VIRTUAL_H);
+      g.addColorStop(0, COL.cream);
+      g.addColorStop(1, '#FFFFFF');
+      ctx.fillStyle = g;
+      ctx.fillRect(0,0,VIRTUAL_W,VIRTUAL_H);
+    }
     drawParallax();
   }
 
@@ -627,11 +751,31 @@ let winsCount = 0;
     const s = scale||2;
     const skin = '#F7D7C3', hair='#3b2d2a', suit='#2b2b2b', shirt='#FFFFFF', tie=COL.pink;
     let px = x, py = y;
-    for(let i=2;i<=9;i++) drawPixel(ctx, px+i*s, py+0*s, s, hair);
-    for(let i=1;i<=10;i++) drawPixel(ctx, px+i*s, py+1*s, s, hair);
-    for(let r=2;r<=6;r++){ for(let c=2;c<=10;c++) drawPixel(ctx, px+c*s, py+r*s, s, skin); }
-    drawPixel(ctx, px+4*s, py+3*s, s, '#000');
-    drawPixel(ctx, px+8*s, py+3*s, s, '#000');
+
+    // --- Head: image (preferred) or pixel fallback ---
+    if (groomHead && groomHead.complete) {
+      // Draw circular-clipped real head image
+      ctx.save();
+      ctx.imageSmoothingEnabled = true; // smooth photo head only
+      const cx = px + 7*s;     // head center approx in current sprite grid
+      const cy = py + 0.8*s;
+      const r  = 10*s;          // head radius
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI*2);
+      ctx.closePath();
+      ctx.clip();
+      ctx.drawImage(groomHead, cx - r, cy - r, r*2, r*2);
+      ctx.restore();
+    } else {
+      // Fallback: original pixel-art head (hair + face + eyes)
+      for(let i=2;i<=9;i++) drawPixel(ctx, px+i*s, py+0*s, s, hair);
+      for(let i=1;i<=10;i++) drawPixel(ctx, px+i*s, py+1*s, s, hair);
+      for(let r=2;r<=6;r++){ for(let c=2;c<=10;c++) drawPixel(ctx, px+c*s, py+r*s, s, skin); }
+      drawPixel(ctx, px+4*s, py+3*s, s, '#000');
+      drawPixel(ctx, px+8*s, py+3*s, s, '#000');
+    }
+
+    // --- Body (unchanged): suit, shirt, tie, arms ---
     for(let c=1;c<=11;c++) drawPixel(ctx, px+c*s, py+7*s, s, suit);
     for(let r=8;r<=11;r++){ for(let c=3;c<=9;c++) drawPixel(ctx, px+c*s, py+r*s, s, (r===8||r===9)?shirt:suit); }
     drawPixel(ctx, px+6*s, py+8*s, s, tie);
@@ -789,7 +933,10 @@ let winsCount = 0;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     const w = Math.min(300, ctx.measureText(text).width + 40);
-    const x = VIRTUAL_W/2, y = VIRTUAL_H/2;
+    const x = VIRTUAL_W/2;
+    const targetY = VIRTUAL_H * 0.72; // move lower than center
+    const maxY = VIRTUAL_H - GROUND_H - 48; // keep above ground
+    const y = Math.min(targetY, maxY);
     ctx.globalAlpha = 0.85;
     ctx.fillStyle = COL.white;
     roundRect(ctx, x - w/2, y - 20, w, 40, 12);
@@ -895,7 +1042,8 @@ let winsCount = 0;
     // near bride hint (after passing 4 gates)
     if(state.phase==='play' && !nearBrideShown && passedCount >= 4){
       nearBrideShown = true;
-      showBubble(pick(MSG.nearBride), VIRTUAL_W/2, 86, 'screen');
+      // Speak from the right edge to hint the bride's side
+      showBubble(pick(MSG.nearBride), VIRTUAL_W - 12, 86, 'screen', 'right');
     }
     drawPlayer();
     drawGround();
@@ -921,6 +1069,7 @@ let winsCount = 0;
   window.addEventListener('resize', setupCanvas, {passive:true});
   if(location.hash==='#hard'){ reset('hard'); document.getElementById('modeLabel').textContent='Hard'; }
   document.getElementById('modeLabel').textContent = state.mode==='casual'?'Casual':'Hard';
+  document.getElementById('camBtn').textContent = state.useCam ? 'โหมดเห็นหน้า: เปิด' : 'โหมดเห็นหน้า: ปิด';
   setScoreLabel();
 })();
 </script>
